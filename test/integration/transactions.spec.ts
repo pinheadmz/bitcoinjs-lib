@@ -189,7 +189,7 @@ describe('bitcoinjs-lib (transactions with psbt)', () => {
       .addInput(inputData1)
       .addOutput({
         script: embed.output!,
-        value: 1000n,
+        value: 0n,
       })
       .addOutput({
         address: regtestUtils.RANDOM_ADDRESS,
