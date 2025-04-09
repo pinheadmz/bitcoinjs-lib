@@ -6,45 +6,18 @@ on:
       - master
   pull_request:
 
-permissions:
-  contents: read
-  pages: write
-  id-token: write
-
 
 jobs:
   ##################
   # Jobs with matrix
   ##################
-  unit:
-    runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        node-version: [18, 'lts/*']
-        # See supported Node.js release schedule at https://nodejs.org/en/about/releases/
-    steps:
-      - uses: actions/checkout@ec3a7ce113134d7a93b817d10a8272cb61118579 # v2
-      - name: Use Node.js ${{ matrix.node-version }}
-        uses: actions/setup-node@eeb10cff27034e7acf239c5d29f62154018672fd # v3
-        with:
-          node-version: ${{ matrix.node-version }}
-          registry-url: https://registry.npmjs.org/
-          cache: 'npm'
-      - run: npm ci
-      - run: npm run unit
   integration:
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
-        node-version: [18, 'lts/*']
+        node-version: [18, 20]
         # See supported Node.js release schedule at https://nodejs.org/en/about/releases/
-    services:
-      regtest:
-        image: junderw/bitcoinjs-regtest-server@sha256:5b69cf95d9edf6d5b3a00504665d6b3c382a6aa3728fe8ce897974c519061463
-        ports:
-          - 8080:8080
     steps:
       - uses: actions/checkout@ec3a7ce113134d7a93b817d10a8272cb61118579 # v2
       - name: Use Node.js ${{ matrix.node-version }}
@@ -53,94 +26,35 @@ jobs:
           node-version: ${{ matrix.node-version }}
           registry-url: https://registry.npmjs.org/
           cache: 'npm'
-      - run: npm ci
-      - run: APIURL=http://127.0.0.1:8080/1 npm run integration
-
-
-
-  #####################
-  # Jobs without matrix
-  #####################
-  coverage:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@ec3a7ce113134d7a93b817d10a8272cb61118579 # v2
-      - uses: actions/setup-node@eeb10cff27034e7acf239c5d29f62154018672fd # v3
-        with:
-          node-version: 'lts/*'
-          registry-url: https://registry.npmjs.org/
-          cache: 'npm'
-      - run: npm ci
-      - run: npm run coverage
-  format:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@ec3a7ce113134d7a93b817d10a8272cb61118579 # v2
-      - uses: actions/setup-node@eeb10cff27034e7acf239c5d29f62154018672fd # v3
-        with:
-          node-version: 'lts/*'
-          registry-url: https://registry.npmjs.org/
-          cache: 'npm'
-      - run: npm ci
-      - run: npm run format:ci
-  gitdiff:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@ec3a7ce113134d7a93b817d10a8272cb61118579 # v2
-      - uses: actions/setup-node@eeb10cff27034e7acf239c5d29f62154018672fd # v3
-        with:
-          node-version: 'lts/*'
-          registry-url: https://registry.npmjs.org/
-          cache: 'npm'
-      - run: npm ci
-      - run: npm run gitdiff:ci
-  lint:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@ec3a7ce113134d7a93b817d10a8272cb61118579 # v2
-      - uses: actions/setup-node@eeb10cff27034e7acf239c5d29f62154018672fd # v3
-        with:
-          node-version: 'lts/*'
-          registry-url: https://registry.npmjs.org/
-          cache: 'npm'
-      - run: npm ci
-      - run: npm run lint
-  lint-tests:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@ec3a7ce113134d7a93b817d10a8272cb61118579 # v2
-      - uses: actions/setup-node@eeb10cff27034e7acf239c5d29f62154018672fd # v3
-        with:
-          node-version: 'lts/*'
-          registry-url: https://registry.npmjs.org/
-          cache: 'npm'
-      - run: npm ci
-      - run: npm run lint:tests
-
-  build-doc:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@ec3a7ce113134d7a93b817d10a8272cb61118579 # v2
-      - uses: actions/setup-node@eeb10cff27034e7acf239c5d29f62154018672fd # v3
-        with:
-          node-version: 'lts/*'
-          registry-url: https://registry.npmjs.org/
-          cache: 'npm'
-      - run: npm ci
-      - run: npm run doc
-      - name: Upload artifact
-        uses: actions/upload-artifact@v4
-        with:
-          path: ./docs
-
-  deploy-doc:
-    if: github.ref == 'refs/heads/master'
-    environment:
-      name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
-    runs-on: ubuntu-latest
-    needs: build-doc
-    steps:
-      - name: Deploy to GitHub Pages
-        id: deployment
-        uses: actions/deploy-pages@v2
+      - name: install
+        run: npm ci
+      - name: install bitcoin
+        run: |
+          sudo apt-get install -y build-essential cmake pkgconf python3 libevent-dev libboost-dev libzmq3-dev libsqlite3-dev
+          git clone --depth 1 --branch http-rewrite-13march2025 https://github.com/pinheadmz/bitcoin
+          cd bitcoin
+          cmake -B build -DENABLE_WALLET=ON -DWITH_ZMQ=ON -DBUILD_GUI=OFF -DBUILD_BENCH=OFF -DBUILD_FUZZ_BINARY=OFF -DBUILD_GUI_TESTS=OFF -DBUILD_TESTS=OFF -DBUILD_UTIL=OFF -DBUILD_TX=OFF -DBUILD_WALLET_TOOL=OFF
+          cmake --build build -j$(nproc)
+          build/bin/bitcoind -regtest -txindex -zmqpubhashtx=tcp://127.0.0.1:30001 -zmqpubhashblock=tcp://127.0.0.1:30001 -rpcworkqueue=32 -daemon
+          build/bin/bitcoin-cli -regtest -rpcwait createwallet ci
+          build/bin/bitcoin-cli -regtest -rpcwait -generate 432
+      - name: start regtest server
+        run: |
+          git clone https://github.com/bitcoinjs/regtest-server
+          cd regtest-server
+          npm install
+          mkdir ~/regtest-data
+          echo "satoshi" > ~/regtest-data/KEYS
+          export RPCCOOKIE=~/.bitcoin/regtest/.cookie
+          export KEYDB=~/regtest-data/KEYS
+          export INDEXDB=~/regtest-data/db
+          export ZMQ=tcp://127.0.0.1:30001
+          export RPCCONCURRENT=32
+          export RPC=http://localhost:18443
+          export PORT=8080
+          node index.js &
+      - name: test
+        run: |
+          export APIPASS=satoshi
+          export APIURL=http://127.0.0.1:8080/1
+          npm run integration
