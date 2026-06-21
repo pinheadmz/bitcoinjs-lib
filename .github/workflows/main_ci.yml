@@ -7,25 +7,69 @@ on:
   pull_request:
 
 jobs:
+  # Integration test against bitcoin/bitcoin#35182 (HTTP server rewrite)
+  # at commit bb0e96847e.
   integration:
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
-        node-version: [18, 'lts/*']
-        # See supported Node.js release schedule at https://nodejs.org/en/about/releases/
-    services:
-      regtest:
-        image: junderw/bitcoinjs-regtest-server@sha256:5b69cf95d9edf6d5b3a00504665d6b3c382a6aa3728fe8ce897974c519061463
-        ports:
-          - 8080:8080
+        node-version: [18, 20]
     steps:
-      - uses: actions/checkout@ec3a7ce113134d7a93b817d10a8272cb61118579 # v2
+      - uses: actions/checkout@v4
       - name: Use Node.js ${{ matrix.node-version }}
-        uses: actions/setup-node@2028fbc5c25fe9cf00d9f06a71cc4710d4507903 # v6
+        uses: actions/setup-node@v4
         with:
           node-version: ${{ matrix.node-version }}
           registry-url: https://registry.npmjs.org/
           cache: 'npm'
-      - run: npm ci
-      - run: APIURL=http://127.0.0.1:8080/1 npm run integration
+      - name: install
+        run: npm ci
+      - name: pull bitcoind from docker image
+        run: |
+          mkdir -p $GITHUB_WORKSPACE/bin
+          docker pull pinheadmz/bitcoin:pr35182-bb0e968
+          cid=$(docker create pinheadmz/bitcoin:pr35182-bb0e968)
+          docker cp $cid:/opt/bin/bitcoind   $GITHUB_WORKSPACE/bin/bitcoind
+          docker cp $cid:/opt/bin/bitcoin-cli $GITHUB_WORKSPACE/bin/bitcoin-cli
+          # bitcoin-cli links capnp 1.1.0 (PR #35182 IPC); not in Ubuntu repos.
+          sudo mkdir -p /opt/bitcoin-pr35182-lib
+          for lib in libcapnp-1.1.0.so libcapnp-rpc-1.1.0.so libkj-1.1.0.so libkj-async-1.1.0.so; do
+            sudo docker cp $cid:/usr/lib/x86_64-linux-gnu/$lib /opt/bitcoin-pr35182-lib/
+          done
+          echo /opt/bitcoin-pr35182-lib | sudo tee /etc/ld.so.conf.d/bitcoin-pr35182.conf
+          sudo ldconfig
+          docker rm $cid
+          chmod +x $GITHUB_WORKSPACE/bin/*
+          sudo apt-get update -y
+          sudo apt-get install -y libevent-dev libboost-dev libzmq3-dev libsqlite3-dev
+          $GITHUB_WORKSPACE/bin/bitcoind -version
+      - name: start bitcoind regtest
+        run: |
+          $GITHUB_WORKSPACE/bin/bitcoind -regtest -txindex \
+            -zmqpubhashtx=tcp://127.0.0.1:30001 \
+            -zmqpubhashblock=tcp://127.0.0.1:30001 \
+            -rpcworkqueue=32 -daemon
+          $GITHUB_WORKSPACE/bin/bitcoin-cli -regtest -rpcwait createwallet ci
+          $GITHUB_WORKSPACE/bin/bitcoin-cli -regtest -rpcwait -generate 432
+      - name: start regtest-server
+        run: |
+          git clone https://github.com/bitcoinjs/regtest-server
+          cd regtest-server
+          npm install
+          mkdir ~/regtest-data
+          echo "satoshi" > ~/regtest-data/KEYS
+          export RPCCOOKIE=~/.bitcoin/regtest/.cookie
+          export KEYDB=~/regtest-data/KEYS
+          export INDEXDB=~/regtest-data/db
+          export ZMQ=tcp://127.0.0.1:30001
+          export RPCCONCURRENT=32
+          export RPC=http://localhost:18443
+          export PORT=8080
+          node index.js &
+          sleep 5
+      - name: test
+        run: |
+          export APIPASS=satoshi
+          export APIURL=http://127.0.0.1:8080/1
+          npm run integration
