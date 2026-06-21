@@ -28,8 +28,8 @@ jobs:
       - name: pull bitcoind from docker image
         run: |
           mkdir -p $GITHUB_WORKSPACE/bin
-          docker pull pinheadmz/bitcoin:pr35182-ddefe4263b
-          cid=$(docker create pinheadmz/bitcoin:pr35182-ddefe4263b)
+          docker pull pinheadmz/bitcoin:pr35182-bb0e968
+          cid=$(docker create pinheadmz/bitcoin:pr35182-bb0e968)
           docker cp $cid:/opt/bin/bitcoind   $GITHUB_WORKSPACE/bin/bitcoind
           docker cp $cid:/opt/bin/bitcoin-cli $GITHUB_WORKSPACE/bin/bitcoin-cli
           # bitcoin-cli links capnp 1.1.0 (PR #35182 IPC); not in Ubuntu repos.
